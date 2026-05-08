@@ -3,6 +3,8 @@ import argparse
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+from prompts import system_prompt
+from call_function import available_functions
 
 # nel file .env abbiamo la chiave API per sfruttare Gemini AI, qui la carichiamo
 load_dotenv()
@@ -27,7 +29,11 @@ if api_key == None:
 client = genai.Client(api_key=api_key)
 
 # la risposta di Gemini
-response = client.models.generate_content(model = "gemini-2.5-flash", contents = messages)
+response = client.models.generate_content(
+    model = "gemini-2.5-flash", 
+    contents = messages,
+    config=types.GenerateContentConfig(tools=[available_functions], system_instruction=system_prompt)
+    )
 
 # restituisci l'errore se la connessione con Gemini API non sta funzionando
 if response.usage_metadata is  None:
@@ -39,10 +45,11 @@ if args.verbose == True:
     print(f"Prompt tokens: {response.usage_metadata.prompt_token_count}")
     print(f"Response tokens: {response.usage_metadata.candidates_token_count}")
 
+# stampa la risposta di Gemini se non ho function calls, altrimenti il contrario stampo solo le func calls
+if response.function_calls is None:
+    print("Response:")
+    print(response.text)
 
-# stampa la risposta di Gemini
-
-print("Response:")
-print(response.text)
-
-
+elif isinstance(response.function_calls, list):
+    for function_call in response.function_calls:
+        print(f"Calling function: {function_call.name}({function_call.args})")
