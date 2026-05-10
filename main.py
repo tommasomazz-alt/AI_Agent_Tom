@@ -1,10 +1,12 @@
 import os
 import argparse
+import sys
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 from prompts import system_prompt
 from call_function import available_functions, call_function
+from config import MAX_ITERATIONS
 
 # nel file .env abbiamo la chiave API per sfruttare Gemini AI, qui la carichiamo
 load_dotenv()
@@ -28,43 +30,56 @@ if api_key is None:
 
 client = genai.Client(api_key=api_key)
 
-# la risposta di Gemini
-response = client.models.generate_content(
-    model = "gemini-2.5-flash", 
-    contents = messages,
-    config=types.GenerateContentConfig(tools=[available_functions], system_instruction=system_prompt)
-    )
+for i in range(MAX_ITERATIONS):
 
-# restituisci l'errore se la connessione con Gemini API non sta funzionando
-if response.usage_metadata is  None:
-    raise RuntimeError("failed API request before printing the tokens consumed")
+    # la risposta di Gemini
+    response = client.models.generate_content(
+        model = "gemini-2.5-flash", 
+        contents = messages,
+        config=types.GenerateContentConfig(tools=[available_functions], system_instruction=system_prompt)
+        )
 
-# stampa i dettagli contestuali dell'interazione solo quando si usa il flag --verbose
-if args.verbose:
-    print(f"User prompt: {args.user_prompt}")
-    print(f"Prompt tokens: {response.usage_metadata.prompt_token_count}")
-    print(f"Response tokens: {response.usage_metadata.candidates_token_count}")
+    if response.candidates is not None:
+        for candidate in response.candidates:
+            messages.append(candidate.content)
 
-# stampa la risposta di Gemini se non ho function calls, altrimenti il contrario stampo solo le func calls
-if response.function_calls is None:
-    print("Response:")
-    print(response.text)
+    # restituisci l'errore se la connessione con Gemini API non sta funzionando
+    if response.usage_metadata is  None:
+        raise RuntimeError("failed API request before printing the tokens consumed")
 
-elif isinstance(response.function_calls, list):
-    results = []
-    for function_call in response.function_calls:
-        function_call_result = call_function(function_call, verbose=args.verbose)
+    # stampa i dettagli contestuali dell'interazione solo quando si usa il flag --verbose
+    if args.verbose:
+        print(f"User prompt: {args.user_prompt}")
+        print(f"Prompt tokens: {response.usage_metadata.prompt_token_count}")
+        print(f"Response tokens: {response.usage_metadata.candidates_token_count}")
 
-        if not function_call_result.parts:
-            raise Exception("Error: .parts of call_function is empty")
+    # stampa la risposta di Gemini se non ho function calls, altrimenti il contrario stampo solo le func calls
+    if response.function_calls is None:
+        print("Response:")
+        print(response.text)
+        break
 
-        if function_call_result.parts[0].function_response is None:
-            raise Exception("Error: not a function response")
+    else:
+        results = []
+        for function_call in response.function_calls:
+            function_call_result = call_function(function_call, verbose=args.verbose)
 
-        if function_call_result.parts[0].function_response.response is None:
-            raise Exception("Error: not a response")
-        
-        results.append(function_call_result.parts[0])
+            if not function_call_result.parts:
+                raise Exception("Error: .parts of call_function is empty")
 
-        if args.verbose:
-            print(f"-> {function_call_result.parts[0].function_response.response}")
+            if function_call_result.parts[0].function_response is None:
+                raise Exception("Error: not a function response")
+
+            if function_call_result.parts[0].function_response.response is None:
+                raise Exception("Error: not a response")
+            
+            results.append(function_call_result.parts[0])
+
+            if args.verbose:
+                print(f"-> {function_call_result.parts[0].function_response.response}")
+
+        messages.append(types.Content(role="user", parts=results))
+    
+if response.function_calls is not None:
+    print(f"Maximum number of iterations {MAX_ITERATIONS} reached without having a final response")
+    sys.exit(1)
